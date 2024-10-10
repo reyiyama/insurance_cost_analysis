@@ -114,7 +114,7 @@ To recreate the findings presented in this analysis, follow these steps:
 
 1. **Clone the Repository**:
    ```bash
-   git clone <repository-url>
+   git clone www.github.com/reyiyama
    ```
 2. **Install Necessary Packages**:
    - Install the required R packages such as `tidyverse`, `GGally`, `MASS`, `car`, and `DAAG`.
