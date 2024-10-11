@@ -1,0 +1,592 @@
+---
+title: "Regression_final_assignment"
+author: "Saurabh Tyagi(3988015), Adyasaa Mohapatra(3988759) and Amay Iyer(s3970066)"
+date: "2024-06-13"
+output:
+  word_document: default
+  html_document: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r,message=FALSE, echo=FALSE, results='hide', warning=FALSE}
+library(car)
+library(MPV)
+library(readr)
+library(lmtest)
+library(leaps)
+library(MASS)
+library(DAAG)
+library(GGally)
+library(ggplot2)
+library(dplyr)
+library(corrplot)
+library(cowplot)
+library(sandwich)
+library(robustbase)
+library(caret)
+library(stats)
+library(Metrics)
+library(MLmetrics)
+```
+
+
+# Exploratory Data Analysis (EDA)
+
+This dataset contains information on individuals' demographics, lifestyle choices, and medical charges. It includes variables such as age, sex, BMI, number of children, smoking status, region, and medical charges. Medical Charges is our target variable.
+```{r, message=FALSE, warning=FALSE}
+# Loading dataset
+Insurance <- read_csv("/Users/saurabhtyagi/Downloads/medical_insurance.csv")
+head(Insurance)
+```
+
+```{r}
+#Cheking for missing values 
+sum(is.na(Insurance))
+```
+No missing values.
+
+```{r}
+summary(Insurance)
+```
+The dataset consists of 2772 observations with variables including age (ranging from 18 to 64), sex, BMI (15.96 to 53.13), number of children (0 to 5), smoking status, region, and medical charges (1122 to 63770), with mean age, BMI, and charges being 39.11, 30.70, and 13261, respectively.
+
+```{r, message= FALSE, warning=FALSE}
+# Generate pairwise plot matrix
+ggpairs(Insurance)
+```
+Interpretation of the figure above:
+
+1. **Correlation Analysis**: Key correlations are highlighted, such as `age` (0.299), `bmi` (0.200), and `smoker` status with `charges`, indicating these variables have significant relationships with medical charges.
+
+2. **Distribution of Variables**: The diagonal plots show the distribution of each variable, with `bmi` being approximately normally distributed and `charges` having a right-skewed distribution.
+
+3. **Box Plots and Scatter Plots**: The plot includes box plots for categorical variables (e.g., `sex`, `smoker`, `region`) and scatter plots for continuous variables (e.g., `age`, `bmi`, `charges`), revealing data spread and potential outliers.
+
+4. **Significance Levels**: Stars next to correlation coefficients indicate significance levels, with `age`, `bmi`, `children`, and `smoker` showing significant correlations with `charges`, guiding further analysis.
+
+
+```{r}
+# Histograms for target variable
+ggplot(Insurance, aes(x = charges)) + geom_histogram(binwidth = 1000)
+```
+The histogram above shows that medical charges are right-skewed.
+
+# Multiple Regression Estimation
+
+```{r}
+# Apply Box-Cox transformation
+bc <- boxcox(Insurance$charges ~ ., data = Insurance)
+lambda <- bc$x[which.max(bc$y)]  
+lambda
+
+# Apply the logarithmic transformation to the 'charges' variable
+Insurance$log_charges <- log(Insurance$charges)
+
+# Plot the histogram of the transformed 'charges' variable
+ggplot(Insurance, aes(x = log_charges)) +
+  geom_histogram(binwidth = 0.3, color = "black", fill = "white") +
+  ggtitle("Histogram of Log-Transformed Charges") +
+  xlab("Log(Charges)") +
+  ylab("Frequency")
+
+
+# Convert categorical variables to factors
+Insurance$sex <- as.factor(Insurance$sex)
+Insurance$smoker <- as.factor(Insurance$smoker)
+Insurance$region <- as.factor(Insurance$region)
+
+# Split data into training and testing sets
+set.seed(123)
+train_index <- sample(seq_len(nrow(Insurance)), size = 0.7*nrow(Insurance))
+Insurance <- Insurance[train_index, ]
+Insurance_test <- Insurance[-train_index, ]
+```
+The Box-Cox transformation plot displayed suggests a lambda value close to zero, indicating that a logarithmic transformation is appropriate for stabilizing variance and addressing skewness in the `charges` variable. The histogram of the log-transformed charges displayed above confirms a more symmetric, bell-shaped distribution, which better meets linear regression assumptions. The regression model, fitted on the log-transformed charges, will now provide more accurate and reliable predictions.
+
+# Model Assessment
+
+```{r}
+# Fit the multiple regression model
+model <- lm(log_charges ~ age + sex + bmi + children + smoker + region, data = Insurance)
+
+# Summary of the model
+summary(model)
+```
+The regression model summary above shows that age, BMI, number of children, and being a smoker significantly increase log-transformed medical charges, with smoking having the largest effect. Males, and individuals in the Northwest, Southeast, and Southwest regions, tend to have lower log-transformed charges. The model explains about 76.8% of the variance in charges (R-squared = 0.7682), indicating a good fit, with all predictors being statistically significant (p < 0.05).
+
+```{r}
+#Anova test
+anova(model) 
+```
+The ANOVA table above for the log-transformed charges shows that age, BMI, number of children, smoking status, and region significantly contribute to the model, with p-values well below 0.05. Smoking status has the largest impact, explaining a significant portion of the variance in charges (F = 3699.8204). Age also has a substantial effect (F = 2461.5626), followed by the number of children (F = 161.3593) and BMI (F = 45.9321). Region also contributes significantly, though to a lesser extent (F = 10.3993).
+
+# Model Adequacy Check
+
+```{r}
+par(mfrow = c(2, 2))
+plot(model)
+```
+Interpretation pf the plots above:
+
+1. **Residuals vs Fitted**: The plot shows a non-random pattern, indicating potential non-linearity or heteroscedasticity in the model.
+2. **Q-Q Plot**: The standardized residuals deviate from the theoretical quantiles, suggesting that the residuals are not normally distributed.
+3. **Scale-Location**: The plot shows a pattern indicating non-constant variance (heteroscedasticity) in the residuals.
+4. **Residuals vs Leverage**: A few points with high leverage and standardized residuals suggest potential influential data points affecting the model's stability.
+
+```{r}
+#Test: Independence 
+durbinWatsonTest(model)
+```
+**Null Hypothesis (H0):** Errors are uncorrelated.
+**Alternative Hypothesis (H1):** Errors are correlated.
+
+The Durbin-Watson statistic of 2.004517 and p-value of 0.912 indicate no significant autocorrelation in the residuals of the regression model.
+
+```{r}
+#Test: Normality 
+shapiro.test(residuals(model))
+```
+**Null Hypothesis (H0):** Errors are normally distributed.
+**Alternative Hypothesis (H1):** Errors are not normally distributed.
+
+The Shapiro-Wilk test result (W = 0.82924, p-value < 2.2e-16) indicates that the residuals of the regression model significantly deviate from a normal distribution.
+
+```{r}
+#Test: Homoscedasticity
+bptest(model)
+```
+**Null Hypothesis (H0):** Errors have a constant variance (homoscedasticity).
+**Alternative Hypothesis (H1):** Errors have a non-constant variance (heteroscedasticity).
+
+The studentized Breusch-Pagan test result (BP = 118.35, df = 8, p-value < 2.2e-16) indicates the presence of significant heteroscedasticity in the residuals of the regression model.
+
+# Model Diagnostic Check:
+
+```{r}
+#Test: Multicollinearity
+vif <- vif(model)
+print(vif)
+```
+The VIF values, all being below 2, indicate that there is no significant multicollinearity among the predictor variables in the regression model.
+
+```{r, warning=FALSE}
+#Test: CR Plot
+crPlots(model)
+```
+The component and residual plots above indicate mostly linear relationships between predictors and log-transformed charges, with significant effects for age, BMI, children, and smoker status, and some regional differences.
+
+```{r}
+#Test: Outlier Test
+outlierTest(model)
+```
+The rstudent and Bonferroni p-values indicated in the table above indicate that observations 130, 724, 1119, 1792, 1225, 1485, 1287, 1865, 1272, and 1493 are significant outliers in the regression model, even after adjusting for multiple comparisons.
+
+```{r}
+influence_measures <- influence.measures(model)
+# Extract Cook's distance from influence measures
+cooks_distance <- influence_measures$infmat[, "cook.d"]
+# Order the Cook's distances in decreasing order and get the top 10 indices
+top_influential_indices <- order(cooks_distance, decreasing = TRUE)[1:10]
+# Extract the influence measures for the top 10 influential points
+top_influence_measures <- influence_measures$infmat[top_influential_indices, ]
+# Print the top 10 influential points
+print(top_influence_measures)
+```
+The dfbeta, dffit, cook's distance, and hat values displayed in the table above  indicate that observations 1287, 1865, 1225, 1485, 1119, 1792, 130, 724, 1272, and 1493 have substantial influence on the regression model's coefficients, highlighting them as influential points.
+
+# Implementation of suitable corrective methods 
+
+```{r}
+
+# Differencing the log-transformed charges
+Insurance$charges_diff <- c(NA, diff(Insurance$log_charges))
+# Calculate studentized residuals
+studentized_residuals <- rstudent(model)
+# Identify influential points (these are indices of influential points provided)
+influential_points <- c(267, 997, 560, 17, 1181, 171, 1233, 960, 533, 1061)
+# Remove influential points from the dataset
+Insurance_clean <- Insurance[-influential_points, ]
+
+# Refit the linear model without influential points
+model_clean <- lm(charges_diff ~ age + sex + bmi + children + smoker + region, data = Insurance_clean)
+# Summary of the new model
+summary(model_clean)
+```
+The regression model indicates that age, BMI, number of children, and smoker status significantly impact the difference in charges, with smoker status having the largest effect, while sex and region have lesser or no significant influence.
+
+```{r}
+# Plot the new model diagnostics
+par(mfrow = c(2, 2))
+plot(model_clean)
+```
+Interpretation of the plots above:
+
+1. **Residuals vs Fitted**: The residuals are randomly scattered around the horizontal axis, suggesting no major non-linearity but potential heteroscedasticity.
+2. **Q-Q Plot**: The residuals follow the theoretical quantiles closely, indicating they are approximately normally distributed.
+3. **Scale-Location**: The residuals display homoscedasticity with no clear pattern, suggesting constant variance across fitted values.
+4. **Residuals vs Leverage**: A few points with higher leverage indicate potential influential observations, but most points have low leverage and standardized residuals.
+
+```{r}
+outlierTest(model_clean)
+```
+The Bonferroni-adjusted p-value indicates that the observation with the rstudent value of 3.158555 is a significant outlier in the regression model, even after adjusting for multiple comparisons.
+```{r}
+ncvTest(model_clean)
+```
+**Null Hypothesis (H0):** Errors have a constant variance (homoscedasticity).
+**Alternative Hypothesis (H1):** Errors have a non-constant variance (heteroscedasticity).
+
+The Non-constant Variance Score Test indicates no significant heteroscedasticity in the residuals of the regression model (Chisquare = 0.09442879, p = 0.75862).
+
+# Variable Selection
+
+```{r}
+# All possible subsets 
+subsets <- leaps::regsubsets(log_charges ~ age + sex + bmi + children + smoker + region, data = Insurance, nbest = 1)
+# Summary
+subsets_summary <- summary(subsets)
+subsets_summary
+```
+The subset selection results displayed above from the exhaustive algorithm indicate the best models with up to 8 predictors for predicting log-transformed charges. Smoking status (smokeryes) is included in all models, highlighting its strong predictive power. Age and BMI are consistently included from the 2-variable model onwards, indicating their importance. The full model with all predictors is also considered, showing that including all variables provides the most comprehensive fit.
+
+```{r}
+# BIC plot
+plot(subsets, scale = "bic", main = "BIC")
+# Adj_r2 plot
+plot(subsets, scale = "adjr2", main = "Adj R2")
+```
+Interpretation of the plots above:
+
+1. **BIC Plot**: The model including age, BMI, number of children, and smoker status minimizes the Bayesian Information Criterion (BIC), suggesting it is the best subset of predictors.
+2. **Adjusted R^2 Plot**: The model with age, BMI, number of children, and smoker status maximizes the adjusted R-squared, indicating it explains the most variance in the log-transformed charges while accounting for the number of predictors.
+
+```{r}
+model_new <- lm(log_charges ~ age + sex + bmi + children + smoker, data = Insurance)
+summary(model_new)
+```
+Interpretation of the table above:
+
+The regression model shows that age, sex, BMI, number of children, and smoker status are significant predictors of log-transformed charges, explaining 76.45% of the variance with all coefficients being highly significant (p < 0.001).
+
+```{r}
+anova(model_new)
+```
+The ANOVA table above indicates that age, BMI, number of children, and smoking status are significant predictors of log-transformed charges (p < 0.001), with smoking status having the largest effect, while sex is not a significant predictor (p = 0.7678).
+
+```{r}
+par(mfrow = c(2, 2))
+plot(model_new)
+```
+Interpretation of the plots above:
+
+1. **Residuals vs Fitted**: The residuals show a slight curve, indicating potential non-linearity and heteroscedasticity in the model.
+2. **Q-Q Plot**: The residuals deviate from the diagonal line, especially at the tails, suggesting that they are not normally distributed.
+3. **Scale-Location**: The residuals show a funnel shape, indicating heteroscedasticity, as the spread increases with fitted values.
+4. **Residuals vs Leverage**: A few points with high leverage and standardized residuals indicate potential influential observations affecting the model's stability.
+
+```{r}
+#Test: Independence
+durbinWatsonTest(model_new)
+```
+**Null Hypothesis (H0):** Errors are uncorrelated.
+**Alternative Hypothesis (H1):** Errors are correlated.
+
+The Durbin-Watson statistic of 1.997864 and p-value of 0.972 indicate no significant autocorrelation in the residuals of the regression model, as the test fails to reject the null hypothesis of no autocorrelation.
+
+```{r}
+#Test: Normality 
+shapiro.test(residuals(model_new))
+```
+**Null Hypothesis (H0):** Errors are normally distributed.
+**Alternative Hypothesis (H1):** Errors are not normally distributed.
+
+The Shapiro-Wilk test result (W = 0.83203, p-value < 2.2e-16) indicates that the residuals of the new regression model significantly deviate from a normal distribution.
+
+```{r}
+#Test: Homoscedasticity
+bptest(model_new)
+```
+**Null Hypothesis (H0):** Errors have a constant variance (homoscedasticity).
+**Alternative Hypothesis (H1):** Errors have a non-constant variance (heteroscedasticity).
+
+The studentized Breusch-Pagan test result (BP = 118.74, df = 5, p-value < 2.2e-16) indicates significant heteroscedasticity in the residuals of the new regression model.
+
+```{r}
+#Test: Multicollinearity
+vif1 <- vif(model_new)
+print(vif1)
+```
+The VIF values, all being close to 1, indicate that there is no significant multicollinearity among the predictor variables in the regression model.
+
+```{r, warning=FALSE}
+#Test: CR Plot
+crPlots(model_new)
+```
+Interpretation of the plots above:
+
+The component and residual plots show mostly linear relationships between predictors and log-transformed charges, with significant positive effects for age, BMI, number of children, and smoker status.
+
+```{r}
+#Test: Outlier Test
+outlierTest(model_new)
+```
+The Bonferroni-adjusted p-values indicate that observations 130, 724, 1119, 1792, 1287, 1865, 1225, 1485, 1272, and 1493 are significant outliers in the regression model.
+
+```{r}
+influence_measures_new <- influence.measures(model_new)
+# Extract Cook's distance from influence measures
+cooks_distance_new <- influence_measures_new$infmat[, "cook.d"]
+# Order the Cook's distances in decreasing order and get the top 10 indices
+top_influential_indices_new <- order(cooks_distance_new, decreasing = TRUE)[1:10]
+# Extract the influence measures for the top 10 influential points
+top_influence_measures_new <- influence_measures_new$infmat[top_influential_indices_new, ]
+# Print the top 10 influential points
+print(top_influence_measures_new)
+```
+Interpretation of the table above:
+
+The dfbeta, dffit, Cook's distance, and hat values indicate that observations 1287, 1865, 1119, 1792, 1225, 1485, 130, 724, 1272, and 1493 have substantial influence on the regression model's coefficients, highlighting them as influential points.
+
+# Model Validation
+
+```{r}
+compare <-anova(model,model_new)
+compare 
+```
+The ANOVA table shows that including the region variable in the model significantly improves the fit (F = 10.399, p < 0.001). This indicates that region has a significant impact on log-transformed charges beyond the effects of age, sex, BMI, number of children, and smoker status.
+
+```{r}
+# PRESS
+DAAG::press(model)
+DAAG::press(model_new)
+```
+The predicted residual sum of squares (PRESS) values indicate that the original model (PRESS = 387.1274) has a better predictive performance compared to the new model (PRESS = 392.1664), suggesting that the original model provides more accurate predictions for log-transformed charges.
+
+```{r,warning=FALSE}
+# Predict on the testing set
+predictions <- predict(model, Insurance)
+# Calculate performance metrics
+mse <- mean((predictions - Insurance_test$log_charges)^2)
+rmse <- sqrt(mse)
+mae <- mean(abs(predictions - Insurance_test$log_charges))
+# Print performance metrics
+cat("MSE:", mse, "\n")
+cat("RMSE:", rmse, "\n")
+cat("MAE:", mae, "\n")
+```
+
+```{r, warning=FALSE}
+# Predict on the testing set
+predictions2 <- predict(model_new, Insurance)
+# Calculate performance metrics
+mse2 <- mean((predictions2 - Insurance_test$log_charges)^2)
+rmse2 <- sqrt(mse2)
+mae2 <- mean(abs(predictions2 - Insurance_test$log_charges))
+# Print performance metrics
+cat("MSE:", mse2, "\n")
+cat("RMSE:", rmse2, "\n")
+cat("MAE:", mae2, "\n")
+```
+
+Considering all the evaluation metrics—ANOVA, PRESS, MSE, RMSE, and MAE—let's summarize:
+
+1. **ANOVA**: The original model (with region) significantly improves the fit compared to the new model (without region) (F = 10.399, p < 0.001).
+2. **PRESS**: The original model has a lower PRESS value (387.1274) compared to the new model (392.1664), indicating better predictive performance.
+3. **MSE, RMSE, and MAE**: The new model has slightly better values, but the differences are very marginal (MSE: 1.549877 vs. 1.551862, RMSE: 1.24494 vs. 1.245737, MAE: 1.008502 vs. 1.008911).
+
+Given these points:
+- The ANOVA and PRESS values strongly favor the original model.
+- The differences in MSE, RMSE, and MAE are minimal and do not outweigh the significant improvement seen in the ANOVA and PRESS.
+
+**Conclusion**: The original model, which includes the region variable, is considered the best overall model due to its significantly better fit and predictive performance as indicated by the ANOVA and PRESS values.
+
+
+# Appendix 
+
+We have fitted a model using the corrections made but it gave us new models but their Press values were really high. hence we did not move forward with them. However we did perform necessary analysis.
+
+```{r}
+# All possible subsets 
+subsets_clean <- leaps::regsubsets(charges_diff ~ age + sex + bmi + children + smoker + region, data = Insurance_clean, nbest = 1)
+# Summary
+subsets_summary_clean <- summary(subsets_clean)
+subsets_summary_clean
+```
+The exhaustive subset selection algorithm indicates that all variables, starting from the most significant ones (smoker, age, bmi, etc.), should be included sequentially, with the best model including all variables.
+
+```{r}
+# BIC plot
+plot(subsets_clean, scale = "bic", main = "BIC")
+# Adj_r2 plot
+plot(subsets_clean, scale = "adjr2", main = "Adj R2")
+```
+Interpretation of the plots above:
+
+**Plot 1 (BIC):** The model including `smokeryes`, `age`, `bmi`, `children`, `regionsoutheast`, and `regionsouthwest` has the lowest Bayesian Information Criterion (BIC), indicating the best model among the subsets evaluated.
+**Plot 2 (Adjusted R²):** The model including `smokeryes`, `age`, `bmi`, `children`, and `regionsoutheast` has the highest adjusted R² value, indicating the best fit among the subsets evaluated.
+
+```{r}
+model2 <- lm(charges_diff ~ age + children + smoker, data = Insurance_clean)
+summary(model2)
+anova(model2)
+```
+Interpretation of the table above:
+
+The regression model shows that `age`, `children`, and `smokeryes` are significant predictors of `charges_diff`, with all coefficients highly significant (p < 0.001), and the model explains approximately 39% of the variability in `charges_diff` (Adjusted R-squared = 0.3899).
+
+```{r}
+model3 <- lm(charges_diff ~ age + bmi + children + smoker, data = Insurance_clean)
+summary(model3)
+anova(model3)
+```
+Interpretation of the table above:
+
+The regression model indicates that `age`, `bmi`, `children`, and `smokeryes` are significant predictors of `charges_diff`, with all coefficients highly significant (p < 0.05), and the model explains approximately 39% of the variability in `charges_diff` (Adjusted R-squared = 0.3912).
+
+```{r}
+# PRESS
+DAAG::press(model2)
+DAAG::press(model3)
+```
+
+Previous models had lower PRESS values, it indicates those models were better at predicting the target variable.
+
+We did stepwise regression for model and model new but we did not find any new models. However we did the necessary analysis.
+
+```{r}
+## Forward stepwise regression
+model_forward_og <- regsubsets(log_charges ~ age + sex + bmi + children + smoker + region, method = "forward", data = Insurance)
+summary(model_forward_og)
+```
+Interpretation of the table above:
+
+The forward subset selection algorithm indicates that all variables, starting from the most significant ones (smokeryes, age, bmi, children, etc.), should be included sequentially, with the best model including all variables.
+
+```{r}
+plot(model_forward_og,scale="bic")
+```
+Interpretation of the plot above:
+
+The Bayesian Information Criterion (BIC) plot suggests that the model including `smokeryes`, `age`, `bmi`, `children`, and `regionsoutheast` has the lowest BIC value, indicating it is the best-fitting model among the evaluated subsets.
+
+```{r}
+plot(model_forward_og,scale="adjr2")
+```
+Interpretation of the plot above:
+
+The adjusted R² plot indicates that the model including `smokeryes`, `age`, `bmi`, `children`, and `regionsoutheast` achieves the highest adjusted R² value, signifying it provides the best fit among the evaluated subsets.
+
+```{r}
+## Backward stepwise regression
+model_backward_og <- regsubsets(log_charges ~ age + sex + bmi + children + smoker + region, method = "backward", data = Insurance)
+summary(model_backward_og)
+```
+Interpretation of the table above:
+
+The backward subset selection algorithm indicates that all variables, starting from the least significant ones, should be excluded sequentially, with the best model including `smokeryes`, `age`, `bmi`, `children`, and `regionsoutheast`.
+
+```{r}
+plot(model_backward_og,scale="bic")
+```
+Interpretation of the table above:
+
+The Bayesian Information Criterion (BIC) plot for the backward selection indicates that the model including `smokeryes`, `age`, `bmi`, `children`, and `regionsoutheast` has the lowest BIC value, signifying it is the best-fitting model among the subsets evaluated.
+
+```{r}
+plot(model_backward_og,scale="adjr2")
+```
+Interpretation of the table above:
+
+The adjusted R² plot for the backward selection indicates that the model including `smokeryes`, `age`, `bmi`, `children`, and `regionsoutheast` achieves the highest adjusted R² value, signifying it provides the best fit among the evaluated subsets.
+
+```{r}
+## Seqrep stepwise regression
+model_seqrep_og <- regsubsets(log_charges ~ age + sex + bmi + children + smoker + region, method = "seqrep", data = Insurance)
+summary(model_seqrep_og)
+```
+Interpretation of the table above:
+
+The sequential replacement subset selection algorithm indicates that all variables, starting from the most significant ones (smokeryes, age, bmi, children, etc.), should be included sequentially, with the best model including all variables.
+
+```{r}
+plot(model_seqrep_og,scale="bic")
+```
+Interpretation of the plot above:
+
+The Bayesian Information Criterion (BIC) plot for the sequential replacement selection indicates that the model including `smokeryes`, `age`, `bmi`, `children`, and `regionsoutheast` has the lowest BIC value, suggesting it is the best-fitting model among the evaluated subsets.
+
+We also did the stepwise regression for the new model but we got the same results as displayed below.
+We have not interpreted the the results becuse they dont help build our model but here however included to show that the necessary analysis was perfromed. 
+
+```{r}
+## Forward stepwise regression
+model_forward <- regsubsets(log_charges ~ age + bmi + children + smoker, method = "forward", data = Insurance)
+summary(model_forward)
+```
+
+```{r}
+plot(model_forward,scale="bic")
+```
+
+```{r}
+plot(model_forward,scale="adjr2")
+```
+
+```{r}
+plot(model_forward,scale="Cp")
+```
+
+```{r}
+plot(model_forward,scale="r")
+```
+
+```{r}
+## Backward stepwise regression
+model_backward <- regsubsets(log_charges ~ age + bmi + children + smoker, method = "backward", data = Insurance)
+summary(model_backward)
+```
+
+```{r}
+plot(model_backward,scale="bic")
+```
+
+```{r}
+plot(model_backward,scale="adjr2")
+```
+
+```{r}
+plot(model_backward,scale="Cp")
+```
+
+```{r}
+plot(model_backward,scale="r")
+```
+
+```{r}
+## Seqrep stepwise regression
+model_seqrep <- regsubsets(log_charges ~ age + bmi + children + smoker, method = "seqrep", data = Insurance)
+summary(model_seqrep)
+```
+
+```{r}
+plot(model_seqrep,scale="bic")
+```
+
+```{r}
+plot(model_seqrep,scale="adjr2")
+```
+
+```{r}
+plot(model_seqrep,scale="Cp")
+```
+
+```{r}
+plot(model_seqrep,scale="r")
+```
+
+
